@@ -14,6 +14,9 @@
 #include <QTextDocument>
 #include <QLabel>
 #include <QRegularExpression>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QTextStream>
 
 // Constructor
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
@@ -29,6 +32,25 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Initialize word count label
     wordCountLabel = new QLabel("Words: 0", this);
     statusBar()->addPermanentWidget(wordCountLabel);
+
+    // Get document path
+    QString documentsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString settingsPath = documentsPath + "/NotepadAppSettings.ini";
+
+    // Load search history from document
+    QSettings settings(settingsPath, QSettings::IniFormat);
+    searchHistory = settings.value("searchHistory").toStringList();
+    // Initialize the tab widget and set it as the central widget
+    tabWidget = new QTabWidget(this);
+    tabWidget->setTabsClosable(true);
+    tabWidget->setMovable(true);  // Enable drag-and-drop rearrangement
+    setCentralWidget(tabWidget);
+
+    // Connect the tab close signal
+    connect(tabWidget, &QTabWidget::tabCloseRequested, this, &MainWindow::on_tabCloseRequested);
+
+    // Open a new tab by default
+    on_actionNew_triggered();
 }
 
 // Destructor
@@ -36,37 +58,74 @@ MainWindow::~MainWindow()
 {
     delete ui; // Cleanup the UI components
 }
+//currentEdit mapping
+QTextEdit* MainWindow::currentEditor()
+{
+    return qobject_cast<QTextEdit*>(tabWidget->currentWidget());
+}
+
+//tab
+void MainWindow::on_tabCloseRequested(int index)
+{
+    QWidget *widget = tabWidget->widget(index);
+    if (widget) {
+        tabWidget->removeTab(index);
+        delete widget;  // Delete the widget to free memory
+    }
+}
+
+//saving
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    // Get the path to the user's Documents directory
+    QString documentsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString settingsPath = documentsPath + "/Just-NoteSettings.ini";
+
+    // Save search history to the settings file in the Documents directory
+    QSettings settings(settingsPath, QSettings::IniFormat);
+    settings.setValue("searchHistory", searchHistory);
+
+    QMainWindow::closeEvent(event); // Call the base class implementation
+}
 
 // New file action: Clears current content
 void MainWindow::on_actionNew_triggered()
 {
-    currentFile.clear(); // Clear the current file path
-    ui->textEdit->setText(""); // Clear the text editor content
+    qDebug() << "New tab triggered";  // Debugging statement
+
+    // Create a new text editor and add it to a new tab
+    QTextEdit *editor = new QTextEdit(this);
+    int tabIndex = tabWidget->addTab(editor, tr("Untitled"));
+    tabWidget->setCurrentIndex(tabIndex);
 }
+
 
 // Open file action: Opens and reads a file into the text editor
 void MainWindow::on_actionOpen_triggered()
 {
-    QString fileName = QFileDialog::getOpenFileName(this, "Open the file"); // Open file dialog
-    QFile file(fileName);
-    currentFile = fileName; // Set the current file path
-
-    if (!file.open(QIODevice::ReadOnly | QFile::Text)) {
-        QMessageBox::warning(this, "Warning", "Cannot open file: " + file.errorString()); // Show error message if the file cannot be opened
-        return;
+    QString fileName = QFileDialog::getOpenFileName(this, tr("Open File"), "", tr("Text Files (*.txt);;All Files (*)"));
+    if (!fileName.isEmpty()) {
+        QFile file(fileName);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextEdit *editor = new QTextEdit(this);
+            editor->setPlainText(file.readAll());
+            int tabIndex = tabWidget->addTab(editor, QFileInfo(fileName).fileName());
+            tabWidget->setCurrentIndex(tabIndex);
+            file.close();
+        }
     }
-
-    QTextStream in(&file);
-    QString text = in.readAll(); // Read the entire file content
-    ui->textEdit->setText(text); // Set the content to the text editor
-    file.close(); // Close the file
 }
-
 // Save file action: Saves the current content to the current file
 void MainWindow::on_actionSave_triggered()
 {
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;
+
+           // Get the current tab's associated file path
+    QString currentFile = tabFileMap.value(editor);
+
     if (currentFile.isEmpty()) {
-        on_actionSave_As_triggered(); // If no file is currently opened, perform Save As
+        on_actionSave_As_triggered(); // If no file is currently associated, perform Save As
     } else {
         QFile file(currentFile);
         if (!file.open(QIODevice::WriteOnly | QFile::Text)) {
@@ -74,28 +133,35 @@ void MainWindow::on_actionSave_triggered()
             return;
         }
         QTextStream out(&file);
-        QString text = ui->textEdit->toPlainText(); // Get the plain text content
+        QString text = editor->toPlainText(); // Get the plain text content from the current editor
         out << text; // Write content to file
         file.close(); // Close the file
+        tabWidget->setTabText(tabWidget->currentIndex(), QFileInfo(currentFile).fileName()); // Update tab text
     }
 }
 
 // Save As action: Opens dialog to save current content to a new file
 void MainWindow::on_actionSave_As_triggered()
 {
-    QString fileName = QFileDialog::getSaveFileName(this, "Save the file"); // Save file dialog
-    QFile file(fileName);
-    currentFile = fileName; // Update current file path
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;
 
-    if (!file.open(QIODevice::WriteOnly | QFile::Text)) {
-        QMessageBox::warning(this, "Warning", "Cannot save file: " + file.errorString());
-        return;
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Save File"), "", tr("Text Files (*.txt);;All Files (*)"));
+    if (!fileName.isEmpty()) {
+        QFile file(fileName);
+        if (!file.open(QIODevice::WriteOnly | QFile::Text)) {
+            QMessageBox::warning(this, "Warning", "Cannot save file: " + file.errorString());
+            return;
+        }
+        QTextStream out(&file);
+        QString text = editor->toPlainText(); // Get the plain text content from the current editor
+        out << text; // Write content to file
+        file.close(); // Close the file
+
+               // Update the file association and tab text
+        tabFileMap[editor] = fileName;
+        tabWidget->setTabText(tabWidget->currentIndex(), QFileInfo(fileName).fileName());
     }
-
-    QTextStream out(&file);
-    QString text = ui->textEdit->toPlainText(); // Get the plain text content
-    out << text; // Write content to file
-    file.close(); // Close the file
 }
 
 // Undo action: Undo the last action in the text editor
@@ -139,21 +205,23 @@ void MainWindow::on_actionFind_triggered()
 {
     static QString lastSearchText = ""; // Keep track of the last searched text
     static QTextDocument::FindFlags lastSearchOptions; // Keep track of the last search options
+    static QStringList searchHistory; // Search history list
 
     bool ok;
-    QString text = QInputDialog::getText(this, tr("Find"), tr("Find what:"), QLineEdit::Normal, lastSearchText, &ok); // Prompt for search text
 
-    if (ok && !text.isEmpty()) {
-        QTextDocument::FindFlags options; // Initialize search options
+    // Prompt the user to select or enter the search text
+    QString text = QInputDialog::getItem(this, tr("Find"), tr("Find what:"), searchHistory, 0, true, &ok);
 
-               // Ask the user for case sensitivity
+        QTextDocument::FindFlags options;
+
+               // Create a custom dialog for case sensitivity
         QMessageBox::StandardButton caseReply = QMessageBox::question(this, tr("Find"), tr("Match case?"), QMessageBox::Yes|QMessageBox::No);
         if (caseReply == QMessageBox::Yes) {
-            options |= QTextDocument::FindCaseSensitively; // Add case sensitivity option
+            options |= QTextDocument::FindCaseSensitively;
         }
 
-        lastSearchText = text; // Update the last search text
-        lastSearchOptions = options; // Update the last search options
+        lastSearchText = text;
+        lastSearchOptions = options;
 
         ui->textEdit->moveCursor(QTextCursor::Start); // Start from the beginning of the document
 
@@ -188,7 +256,7 @@ void MainWindow::on_actionFind_triggered()
             }
         }
     }
-}
+
 
 // Replace action: Replaces occurrences of text in the document
 void MainWindow::on_actionReplace_triggered()
@@ -565,6 +633,24 @@ void MainWindow::updateWordCount()
            // Update the word count label
     wordCountLabel->setText(QString("Words: %1").arg(wordCount));
 }
+
+//alignment
+void MainWindow::on_actionLeft_triggered() {
+    ui->textEdit->setAlignment(Qt::AlignLeft);
+}
+
+void MainWindow::on_actionCenter_triggered() {
+    ui->textEdit->setAlignment(Qt::AlignCenter);
+}
+
+void MainWindow::on_actionRight_triggered() {
+    ui->textEdit->setAlignment(Qt::AlignRight);
+}
+
+void MainWindow::on_actionJustify_triggered() {
+    ui->textEdit->setAlignment(Qt::AlignJustify);
+}
+
 
 // Exit action: Closes the application
 void MainWindow::on_actionExit_triggered()

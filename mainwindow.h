@@ -4,6 +4,8 @@
 #include <QMainWindow>
 #include <QTextEdit>
 #include <QLabel>
+#include <QCloseEvent>
+#include <QTabWidget>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -16,7 +18,7 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
 public slots:
@@ -55,10 +57,15 @@ public slots:
     void autoSaveDocument();
     void on_actionTab_Width_triggered();
     void on_actionToggle_Spaces_for_Tabs_triggered();
+    void on_actionLeft_triggered();
+    void on_actionRight_triggered();
+    void on_actionCenter_triggered();
+    void on_actionJustify_triggered();
 
 private slots:
     void highlightTextWithColor(const QColor &color);
     void updateWordCount();
+    void on_tabCloseRequested(int index);
 
 private:
     Ui::MainWindow *ui;
@@ -68,6 +75,12 @@ private:
     int tabWidth;
     bool useSpacesForTabs;
     QLabel *wordCountLabel;
+    QStringList searchHistory;
+    void closeEvent(QCloseEvent *event) override;
+    QTabWidget *tabWidget;
+    QTextEdit *currentEditor();
+    QMap<QWidget*, QString> tabFileMap; // Map each tab's widget to its associated file path
+
 };
 
 #endif // MAINWINDOW_H
