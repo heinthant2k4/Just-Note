@@ -6,6 +6,11 @@
 #include <QLabel>
 #include <QCloseEvent>
 #include <QTabWidget>
+#include <QTextStream>
+#include <QCompleter>
+#include <QStringListModel>
+#include <QFile>
+#include <QtTextToSpeech/QTextToSpeech>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -56,7 +61,6 @@ public slots:
     void on_actionSave_Interval_triggered();
     void autoSaveDocument();
     void on_actionTab_Width_triggered();
-    void on_actionToggle_Spaces_for_Tabs_triggered();
     void on_actionLeft_triggered();
     void on_actionRight_triggered();
     void on_actionCenter_triggered();
@@ -66,6 +70,9 @@ private slots:
     void highlightTextWithColor(const QColor &color);
     void updateWordCount();
     void on_tabCloseRequested(int index);
+    void on_actionAdd_Bullet_Points_triggered();
+    void on_actionAdd_Numberings_triggered();
+    void on_actionText_To_Speech_triggered();
 
 private:
     Ui::MainWindow *ui;
@@ -80,6 +87,9 @@ private:
     QTabWidget *tabWidget;
     QTextEdit *currentEditor();
     QMap<QWidget*, QString> tabFileMap; // Map each tab's widget to its associated file path
+    bool isDarkmode;
+    QTextToSpeech *speech;
+
 
 };
 

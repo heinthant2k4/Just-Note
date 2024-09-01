@@ -14,7 +14,7 @@
    <string>MainWindow</string>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <layout class="QVBoxLayout" name="verticalLayout">
+   <layout class="QHBoxLayout" name="horizontalLayout">
     <item>
      <widget class="QTextEdit" name="textEdit">
       <property name="html">
@@ -94,11 +94,19 @@ li.checked::marker { content: &quot;\2612&quot;; }
      <addaction name="actionSub_Script"/>
      <addaction name="actionSuper_Script"/>
     </widget>
+    <widget class="QMenu" name="menuText_Formats">
+     <property name="title">
+      <string>Text Formats</string>
+     </property>
+     <addaction name="actionAdd_Bullet_Points"/>
+     <addaction name="actionAdd_Numberings"/>
+    </widget>
     <addaction name="menuHighlight"/>
     <addaction name="separator"/>
     <addaction name="menuText_Style"/>
     <addaction name="menuScript"/>
     <addaction name="actionSpacing"/>
+    <addaction name="menuText_Formats"/>
     <addaction name="actionClear_All_Format"/>
    </widget>
    <widget class="QMenu" name="menuSettings">
@@ -130,16 +138,22 @@ li.checked::marker { content: &quot;\2612&quot;; }
      <addaction name="actionAuto_Save"/>
      <addaction name="actionSave_Interval"/>
      <addaction name="actionTab_Width"/>
-     <addaction name="actionToggle_Spaces_for_Tabs"/>
      <addaction name="menuAlignment"/>
     </widget>
     <addaction name="menuAppearence"/>
     <addaction name="menuEditor"/>
+    <addaction name="actionText_To_Speech"/>
+   </widget>
+   <widget class="QMenu" name="menuInsert">
+    <property name="title">
+     <string>About</string>
+    </property>
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuEdit"/>
    <addaction name="menuFormat"/>
    <addaction name="menuSettings"/>
+   <addaction name="menuInsert"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
   <action name="actionNew">
@@ -305,11 +319,6 @@ li.checked::marker { content: &quot;\2612&quot;; }
     <string>Tab Width</string>
    </property>
   </action>
-  <action name="actionToggle_Spaces_for_Tabs">
-   <property name="text">
-    <string>Toggle Spaces for Tabs</string>
-   </property>
-  </action>
   <action name="actionLeft">
    <property name="text">
     <string>Align Left</string>
@@ -328,6 +337,21 @@ li.checked::marker { content: &quot;\2612&quot;; }
   <action name="actionJustify">
    <property name="text">
     <string>Justify</string>
+   </property>
+  </action>
+  <action name="actionAdd_Bullet_Points">
+   <property name="text">
+    <string>Add Bullet Points</string>
+   </property>
+  </action>
+  <action name="actionAdd_Numberings">
+   <property name="text">
+    <string>Add Numberings</string>
+   </property>
+  </action>
+  <action name="actionText_To_Speech">
+   <property name="text">
+    <string>Text To Speech</string>
    </property>
   </action>
  </widget>

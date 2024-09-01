@@ -1,4 +1,4 @@
-QT       += core gui
+QT       += core gui texttospeech
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -27,4 +27,7 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 INCLUDEPATH += "C:/vcpkg/installed/x64-windows/include"
 LIBS += -L"C:/vcpkg/installed/x64-windows/lib" -lhunspell-1.7 -licuuc -licuin -licudt
 CONFIG += staticlib
+
+DISTFILES += \
+    dictionary
 

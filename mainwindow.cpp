@@ -16,7 +16,9 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
-#include <QTextStream>
+#include <QTextTable>
+#include <QTextList>
+#include <QTextBlockFormat>
 
 // Constructor
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
@@ -24,33 +26,55 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     ui->setupUi(this); // Setup the UI components
     autoSaveEnabled = false;  // Auto-save is initially disabled
     autoSaveTimer = new QTimer(this);  // Create the auto-save timer
+    //darkmode init
+    isDarkmode = false;
 
     connect(autoSaveTimer, &QTimer::timeout, this, &MainWindow::autoSaveDocument); // Connect the timer signal to the auto-save function
     tabWidth = 4;
     useSpacesForTabs = true;
 
-    // Initialize word count label
+           // Initialize word count label
     wordCountLabel = new QLabel("Words: 0", this);
     statusBar()->addPermanentWidget(wordCountLabel);
 
-    // Get document path
+           // Get document path
     QString documentsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-    QString settingsPath = documentsPath + "/NotepadAppSettings.ini";
+    QString sessionFilePath = documentsPath + "/NotepadAppSession.ini";
 
-    // Load search history from document
-    QSettings settings(settingsPath, QSettings::IniFormat);
-    searchHistory = settings.value("searchHistory").toStringList();
-    // Initialize the tab widget and set it as the central widget
+           // Load search history from document
+    QSettings settings(sessionFilePath, QSettings::IniFormat);
+
+           // Initialize the tab widget and set it as the central widget
     tabWidget = new QTabWidget(this);
     tabWidget->setTabsClosable(true);
     tabWidget->setMovable(true);  // Enable drag-and-drop rearrangement
     setCentralWidget(tabWidget);
 
-    // Connect the tab close signal
+           // Connect the tab close signal
     connect(tabWidget, &QTabWidget::tabCloseRequested, this, &MainWindow::on_tabCloseRequested);
 
-    // Open a new tab by default
-    on_actionNew_triggered();
+           // Load session data
+    int tabCount = settings.value("tabCount", 0).toInt();
+    for (int i = 0; i < tabCount; ++i) {
+        QString filePath = settings.value(QString("tab%1_filePath").arg(i)).toString();
+        QString content = settings.value(QString("tab%1_content").arg(i)).toString();
+
+        QTextEdit *editor = new QTextEdit(this);
+        editor->setPlainText(content);
+        int tabIndex = tabWidget->addTab(editor, filePath.isEmpty() ? tr("Untitled") : QFileInfo(filePath).fileName());
+        tabFileMap[editor] = filePath;
+    }
+
+           // Restore the current tab index
+    int currentTab = settings.value("currentTab", 0).toInt();
+    tabWidget->setCurrentIndex(currentTab);
+
+           // If no tabs were restored, open a new one
+    if (tabCount == 0) {
+        on_actionNew_triggered();
+    }
+    //speech init
+    speech = new QTextToSpeech(this);
 }
 
 // Destructor
@@ -58,13 +82,16 @@ MainWindow::~MainWindow()
 {
     delete ui; // Cleanup the UI components
 }
-//currentEdit mapping
+
+// Tab Management Functions
+
+// Current editor mapping
 QTextEdit* MainWindow::currentEditor()
 {
     return qobject_cast<QTextEdit*>(tabWidget->currentWidget());
 }
 
-//tab
+// Handle tab close requests
 void MainWindow::on_tabCloseRequested(int index)
 {
     QWidget *widget = tabWidget->widget(index);
@@ -74,31 +101,18 @@ void MainWindow::on_tabCloseRequested(int index)
     }
 }
 
-//saving
-void MainWindow::closeEvent(QCloseEvent *event)
-{
-    // Get the path to the user's Documents directory
-    QString documentsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-    QString settingsPath = documentsPath + "/Just-NoteSettings.ini";
-
-    // Save search history to the settings file in the Documents directory
-    QSettings settings(settingsPath, QSettings::IniFormat);
-    settings.setValue("searchHistory", searchHistory);
-
-    QMainWindow::closeEvent(event); // Call the base class implementation
-}
+// Document Management Functions
 
 // New file action: Clears current content
 void MainWindow::on_actionNew_triggered()
 {
     qDebug() << "New tab triggered";  // Debugging statement
 
-    // Create a new text editor and add it to a new tab
+           // Create a new text editor and add it to a new tab
     QTextEdit *editor = new QTextEdit(this);
     int tabIndex = tabWidget->addTab(editor, tr("Untitled"));
     tabWidget->setCurrentIndex(tabIndex);
 }
-
 
 // Open file action: Opens and reads a file into the text editor
 void MainWindow::on_actionOpen_triggered()
@@ -111,21 +125,27 @@ void MainWindow::on_actionOpen_triggered()
             editor->setPlainText(file.readAll());
             int tabIndex = tabWidget->addTab(editor, QFileInfo(fileName).fileName());
             tabWidget->setCurrentIndex(tabIndex);
+
+                   // Store the file path in tabFileMap
+            tabFileMap[editor] = fileName;
+
             file.close();
         }
     }
 }
+
+
+
 // Save file action: Saves the current content to the current file
 void MainWindow::on_actionSave_triggered()
 {
     QTextEdit *editor = currentEditor();
     if (!editor) return;
 
-           // Get the current tab's associated file path
     QString currentFile = tabFileMap.value(editor);
 
     if (currentFile.isEmpty()) {
-        on_actionSave_As_triggered(); // If no file is currently associated, perform Save As
+        on_actionSave_As_triggered();
     } else {
         QFile file(currentFile);
         if (!file.open(QIODevice::WriteOnly | QFile::Text)) {
@@ -133,10 +153,11 @@ void MainWindow::on_actionSave_triggered()
             return;
         }
         QTextStream out(&file);
-        QString text = editor->toPlainText(); // Get the plain text content from the current editor
-        out << text; // Write content to file
-        file.close(); // Close the file
-        tabWidget->setTabText(tabWidget->currentIndex(), QFileInfo(currentFile).fileName()); // Update tab text
+        QString text = editor->toPlainText();
+        out << text;
+        file.close();
+
+        tabWidget->setTabText(tabWidget->currentIndex(), QFileInfo(currentFile).fileName());
     }
 }
 
@@ -154,114 +175,231 @@ void MainWindow::on_actionSave_As_triggered()
             return;
         }
         QTextStream out(&file);
-        QString text = editor->toPlainText(); // Get the plain text content from the current editor
-        out << text; // Write content to file
-        file.close(); // Close the file
+        QString text = editor->toPlainText();
+        out << text;
+        file.close();
 
-               // Update the file association and tab text
+               // Update the file path in tabFileMap
         tabFileMap[editor] = fileName;
         tabWidget->setTabText(tabWidget->currentIndex(), QFileInfo(fileName).fileName());
     }
 }
 
+
+
+//close file
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    QString documentsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString sessionFilePath = documentsPath + "/NotepadAppSession.ini";
+
+    QSettings settings(sessionFilePath, QSettings::IniFormat);
+
+    settings.clear();
+
+    int tabCount = tabWidget->count();
+    settings.setValue("tabCount", tabCount);
+
+    for (int i = 0; i < tabCount; ++i) {
+        QWidget *widget = tabWidget->widget(i);
+        QTextEdit *editor = qobject_cast<QTextEdit *>(widget);
+
+        if (editor) {
+            QString filePath = tabFileMap.value(editor, QString());
+            settings.setValue(QString("tab%1_filePath").arg(i), filePath);
+            settings.setValue(QString("tab%1_content").arg(i), editor->toPlainText());
+        }
+    }
+
+    settings.setValue("currentTab", tabWidget->currentIndex());
+
+    qDebug() << "Session saved with tab count:" << tabCount;
+
+    QMainWindow::closeEvent(event);
+}
+
+//Text-formatting
+void MainWindow::on_actionAdd_Bullet_Points_triggered() {
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+    QTextCursor cursor = editor->textCursor();
+    cursor.beginEditBlock();
+
+    QTextListFormat listFormat;
+    listFormat.setStyle(QTextListFormat::ListDisc); // Set the style to bullets
+    cursor.createList(listFormat); // Create a bullet list
+
+    cursor.endEditBlock();
+}
+
+void MainWindow::on_actionAdd_Numberings_triggered() {
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+    QTextCursor cursor = editor->textCursor();
+    cursor.beginEditBlock();
+
+    QTextListFormat listFormat;
+    listFormat.setStyle(QTextListFormat::ListDecimal); // Set the style to numbering
+    cursor.createList(listFormat); // Create a numbered list
+
+    cursor.endEditBlock();
+}
+
+
+
+// Auto-Save Functions
+
+// Auto-save trigger
+void MainWindow::on_actionAuto_Save_triggered()
+{
+    autoSaveEnabled = !autoSaveEnabled;  // Toggle the auto-save state
+
+    if (autoSaveEnabled) {
+        // Enable auto-save with the default interval (e.g., 5 minutes)
+        autoSaveTimer->start(300000); // 5 minutes in milliseconds
+        QMessageBox::information(this, tr("Auto-Save"), tr("Auto-save enabled. Documents will be saved every 5 minutes."));
+    } else {
+        // Disable auto-save
+        autoSaveTimer->stop();
+        QMessageBox::information(this, tr("Auto-Save"), tr("Auto-save disabled."));
+    }
+}
+
+// Save interval setting
+void MainWindow::on_actionSave_Interval_triggered()
+{
+    // Prompt user for auto-save interval in minutes
+    bool ok;
+    int interval = QInputDialog::getInt(this, tr("Auto-Save Interval"), tr("Set auto-save interval (in minutes):"), 5, 1, 60, 1, &ok);
+
+    if (ok) {
+        autoSaveTimer->setInterval(interval * 60000); // Convert minutes to milliseconds
+        QMessageBox::information(this, tr("Auto-Save"), tr("Auto-save interval set to %1 minutes.").arg(interval));
+    }
+}
+
+// Auto-save document function
+void MainWindow::autoSaveDocument(){
+    if (!currentFile.isEmpty()){
+        on_actionSave_triggered(); // save the file
+    }
+}
+
+// Text Editing Functions
+
 // Undo action: Undo the last action in the text editor
 void MainWindow::on_actionUndo_triggered()
 {
-    ui->textEdit->undo();
+    QTextEdit *editor = currentEditor();
+    if (editor) editor->undo();
 }
 
 // Redo action: Redo the previously undone action in the text editor
 void MainWindow::on_actionRedo_triggered()
 {
-    ui->textEdit->redo();
+    QTextEdit *editor = currentEditor();
+    if (editor) editor->redo();
 }
 
 // Cut action: Cut the selected text
 void MainWindow::on_actionCut_triggered()
 {
-    ui->textEdit->cut();
+    QTextEdit *editor = currentEditor();
+    if (editor) editor->cut();
 }
 
 // Copy action: Copy the selected text
 void MainWindow::on_actionCopy_triggered()
 {
-    ui->textEdit->copy();
+    QTextEdit *editor = currentEditor();
+    if (editor) editor->copy();
 }
 
 // Paste action: Paste the copied text
 void MainWindow::on_actionPaste_triggered()
 {
-    ui->textEdit->paste();
+    QTextEdit *editor = currentEditor();
+    if (editor) editor->paste();
 }
 
 // Select All action: Selects all the text in the editor
 void MainWindow::on_actionSelect_All_triggered()
 {
-    ui->textEdit->selectAll();
+    QTextEdit *editor = currentEditor();
+    if (editor) editor->selectAll();
 }
+
+// Find and Replace Functions
 
 // Find action: Finds the text in the document
 void MainWindow::on_actionFind_triggered()
 {
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;
+
     static QString lastSearchText = ""; // Keep track of the last searched text
     static QTextDocument::FindFlags lastSearchOptions; // Keep track of the last search options
     static QStringList searchHistory; // Search history list
 
     bool ok;
 
-    // Prompt the user to select or enter the search text
+           // Prompt the user to select or enter the search text
     QString text = QInputDialog::getItem(this, tr("Find"), tr("Find what:"), searchHistory, 0, true, &ok);
 
-        QTextDocument::FindFlags options;
+    QTextDocument::FindFlags options;
 
-               // Create a custom dialog for case sensitivity
-        QMessageBox::StandardButton caseReply = QMessageBox::question(this, tr("Find"), tr("Match case?"), QMessageBox::Yes|QMessageBox::No);
-        if (caseReply == QMessageBox::Yes) {
-            options |= QTextDocument::FindCaseSensitively;
-        }
+           // Create a custom dialog for case sensitivity
+    QMessageBox::StandardButton caseReply = QMessageBox::question(this, tr("Find"), tr("Match case?"), QMessageBox::Yes|QMessageBox::No);
+    if (caseReply == QMessageBox::Yes) {
+        options |= QTextDocument::FindCaseSensitively;
+    }
 
-        lastSearchText = text;
-        lastSearchOptions = options;
+    lastSearchText = text;
+    lastSearchOptions = options;
 
-        ui->textEdit->moveCursor(QTextCursor::Start); // Start from the beginning of the document
+    editor->moveCursor(QTextCursor::Start); // Start from the beginning of the document
 
-               // Perform the search
-        if (!ui->textEdit->find(text, options)) {
-            QMessageBox::information(this, tr("Find"), tr("Cannot find \"%1\"").arg(text)); // Show message if text not found
-            return;
-        }
+           // Perform the search
+    if (!editor->find(text, options)) {
+        QMessageBox::information(this, tr("Find"), tr("Cannot find \"%1\"").arg(text)); // Show message if text not found
+        return;
+    }
 
-               // Loop to find next/previous occurrences
-        while (true) {
-            QMessageBox::StandardButton nextReply = QMessageBox::question(this, tr("Find Next"), tr("Do you want to find the next occurrence?"), QMessageBox::Yes|QMessageBox::No|QMessageBox::Cancel);
+           // Loop to find next/previous occurrences
+    while (true) {
+        QMessageBox::StandardButton nextReply = QMessageBox::question(this, tr("Find Next"), tr("Do you want to find the next occurrence?"), QMessageBox::Yes|QMessageBox::No|QMessageBox::Cancel);
+
+        if (nextReply == QMessageBox::Yes) {
+            if (!editor->find(text, options)) {
+                QMessageBox::information(this, tr("Find Next"), tr("No more occurrences of \"%1\"").arg(text));
+                break;
+            }
+        } else if (nextReply == QMessageBox::No) {
+            nextReply = QMessageBox::question(this, tr("Find Previous"), tr("Do you want to find the previous occurrence?"), QMessageBox::Yes|QMessageBox::Cancel);
 
             if (nextReply == QMessageBox::Yes) {
-                if (!ui->textEdit->find(text, options)) {
-                    QMessageBox::information(this, tr("Find Next"), tr("No more occurrences of \"%1\"").arg(text));
-                    break;
-                }
-            } else if (nextReply == QMessageBox::No) {
-                nextReply = QMessageBox::question(this, tr("Find Previous"), tr("Do you want to find the previous occurrence?"), QMessageBox::Yes|QMessageBox::Cancel);
-
-                if (nextReply == QMessageBox::Yes) {
-                    if (!ui->textEdit->find(text, options | QTextDocument::FindBackward)) {
-                        QMessageBox::information(this, tr("Find Previous"), tr("No previous occurrences of \"%1\"").arg(text));
-                        break;
-                    }
-                } else {
+                if (!editor->find(text, options | QTextDocument::FindBackward)) {
+                    QMessageBox::information(this, tr("Find Previous"), tr("No previous occurrences of \"%1\"").arg(text));
                     break;
                 }
             } else {
                 break;
             }
+        } else {
+            break;
         }
     }
-
+}
 
 // Replace action: Replaces occurrences of text in the document
 void MainWindow::on_actionReplace_triggered()
 {
-    // Prompt the user for the text to find
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;
+
+           // Prompt the user for the text to find
     bool ok;
     QString findText = QInputDialog::getText(this, tr("Find"), tr("Find what:"), QLineEdit::Normal, "", &ok);
 
@@ -269,8 +407,8 @@ void MainWindow::on_actionReplace_triggered()
         // Prompt the user for the replacement text
         QString replaceText = QInputDialog::getText(this, tr("Replace"), tr("Replace with:"), QLineEdit::Normal, "", &ok);
         if (ok) {
-            QTextCursor cursor = ui->textEdit->textCursor(); // Get the current cursor
-            QTextDocument *document = ui->textEdit->document(); // Get the document
+            QTextCursor cursor = editor->textCursor(); // Get the current cursor
+            QTextDocument *document = editor->document(); // Get the document
 
             cursor.beginEditBlock(); // Begin the undo block
 
@@ -303,53 +441,56 @@ void MainWindow::on_actionReplace_triggered()
     }
 }
 
-
+// Text Formatting Functions
 
 // Highlight action: Opens a color picker dialog to highlight text
 void MainWindow::on_actionHighlight_triggered()
 {
-    QColor color = QColorDialog::getColor(Qt::yellow, this, "Select Highlight Color"); // Prompt for highlight color
+    QColor color = QColorDialog::getColor(Qt::yellow, this, "Select Highlight Color");
 
     if (color.isValid()) {
-        QTextCursor cursor = ui->textEdit->textCursor();
+        QTextEdit *editor = currentEditor(); // Make sure this function is valid and returns the current QTextEdit
+        if (!editor) return; // If there's no editor, exit early
 
-        if (!cursor.selectedText().isEmpty()) {
-            QTextCharFormat format;
-            format.setBackground(color); // Set background color for highlight
+        QTextCursor cursor = editor->textCursor(); // Get the current text cursor
+        if (!cursor.hasSelection()) return; // If no text is selected, exit early
 
-            cursor.mergeCharFormat(format); // Apply formatting to selected text
-        }
+        QTextCharFormat format;
+        format.setBackground(color); // Set the background color to the selected color
+
+        cursor.mergeCharFormat(format); // Apply the formatting to the selected text
     }
 }
 
-// Highlight predefined colors: Yellow
+// Highlight predefined colors
 void MainWindow::on_actionHighlight_Yellow_triggered()
 {
     highlightTextWithColor(Qt::yellow);
 }
 
-// Highlight predefined colors: Green
 void MainWindow::on_actionHighlight_Green_triggered()
 {
     highlightTextWithColor(Qt::green);
 }
 
-// Highlight predefined colors: Blue
 void MainWindow::on_actionHighlight_Blue_triggered()
 {
-    highlightTextWithColor(Qt::blue);
+    QColor customBlue(0, 0, 255);
+    highlightTextWithColor(customBlue);
 }
 
 // Helper function: Apply the selected color to the text
 void MainWindow::highlightTextWithColor(const QColor &color)
 {
-    QTextCursor cursor = ui->textEdit->textCursor();
+    QTextEdit *editor = currentEditor(); // Get the current editor
+    if (!editor) return; // If no editor is found, exit early
 
-    if (!cursor.selectedText().isEmpty()) {
-        QTextCharFormat format;
-        format.setBackground(color); // Set background color
-        cursor.mergeCharFormat(format); // Apply formatting
-    }
+    QTextCursor cursor = editor->textCursor(); // Get the current text cursor
+    if (!cursor.hasSelection()) return; // If no text is selected, exit early
+
+    QTextCharFormat format;
+    format.setBackground(color); // Set the background to the specified color
+    cursor.mergeCharFormat(format); // Apply the formatting
 }
 
 // Clear highlight action: Clears the highlight color
@@ -358,15 +499,20 @@ void MainWindow::on_actionClear_Highlight_triggered()
     highlightTextWithColor(Qt::transparent); // Clear highlight by setting color to transparent
 }
 
+// Text styling actions
+
 // Bold action: Toggles bold formatting on the selected text
 void MainWindow::on_actionBold_triggered() {
-    QTextCursor cursor = ui->textEdit->textCursor();
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+    QTextCursor cursor = editor->textCursor();
 
     if (!cursor.hasSelection()) {
         // Apply format to new text or the cursor position
         QTextCharFormat format;
         format.setFontWeight(cursor.charFormat().fontWeight() == QFont::Bold ? QFont::Normal : QFont::Bold);
-        ui->textEdit->setCurrentCharFormat(format);
+        editor->setCurrentCharFormat(format);
         return;
     }
 
@@ -377,12 +523,15 @@ void MainWindow::on_actionBold_triggered() {
 
 // Italic action: Toggles italic formatting on the selected text
 void MainWindow::on_actionItalic_triggered() {
-    QTextCursor cursor = ui->textEdit->textCursor();
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+    QTextCursor cursor = editor->textCursor();
 
     if (!cursor.hasSelection()) {
         QTextCharFormat format;
         format.setFontItalic(!cursor.charFormat().fontItalic());
-        ui->textEdit->setCurrentCharFormat(format);
+        editor->setCurrentCharFormat(format);
         return;
     }
 
@@ -393,12 +542,15 @@ void MainWindow::on_actionItalic_triggered() {
 
 // Underline action: Toggles underline formatting on the selected text
 void MainWindow::on_actionUnderline_triggered() {
-    QTextCursor cursor = ui->textEdit->textCursor();
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+    QTextCursor cursor = editor->textCursor();
 
     if (!cursor.hasSelection()) {
         QTextCharFormat format;
         format.setFontUnderline(!cursor.charFormat().fontUnderline());
-        ui->textEdit->setCurrentCharFormat(format);
+        editor->setCurrentCharFormat(format);
         return;
     }
 
@@ -409,12 +561,15 @@ void MainWindow::on_actionUnderline_triggered() {
 
 // Strikethrough action: Toggles strikethrough formatting on the selected text
 void MainWindow::on_actionStrike_through_triggered() {
-    QTextCursor cursor = ui->textEdit->textCursor();
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+    QTextCursor cursor = editor->textCursor();
 
     if (!cursor.hasSelection()) {
         QTextCharFormat format;
         format.setFontStrikeOut(!cursor.charFormat().fontStrikeOut());
-        ui->textEdit->setCurrentCharFormat(format);
+        editor->setCurrentCharFormat(format);
         return;
     }
 
@@ -423,16 +578,20 @@ void MainWindow::on_actionStrike_through_triggered() {
     cursor.mergeCharFormat(format);
 }
 
-// Subscript action: Toggles subscript formatting on the selected text
+// Subscript and Superscript actions
+
 void MainWindow::on_actionSub_Script_triggered() {
-    QTextCursor cursor = ui->textEdit->textCursor();
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+    QTextCursor cursor = editor->textCursor();
 
     if (!cursor.hasSelection()) {
         QTextCharFormat format;
         format.setVerticalAlignment(cursor.charFormat().verticalAlignment() == QTextCharFormat::AlignSubScript
                                             ? QTextCharFormat::AlignNormal
                                             : QTextCharFormat::AlignSubScript);
-        ui->textEdit->setCurrentCharFormat(format);
+        editor->setCurrentCharFormat(format);
         return;
     }
 
@@ -443,16 +602,18 @@ void MainWindow::on_actionSub_Script_triggered() {
     cursor.mergeCharFormat(format);
 }
 
-// Superscript action: Toggles superscript formatting on the selected text
 void MainWindow::on_actionSuper_Script_triggered() {
-    QTextCursor cursor = ui->textEdit->textCursor();
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+    QTextCursor cursor = editor->textCursor();
 
     if (!cursor.hasSelection()) {
         QTextCharFormat format;
         format.setVerticalAlignment(cursor.charFormat().verticalAlignment() == QTextCharFormat::AlignSuperScript
                                             ? QTextCharFormat::AlignNormal
                                             : QTextCharFormat::AlignSuperScript);
-        ui->textEdit->setCurrentCharFormat(format);
+        editor->setCurrentCharFormat(format);
         return;
     }
 
@@ -463,22 +624,29 @@ void MainWindow::on_actionSuper_Script_triggered() {
     cursor.mergeCharFormat(format);
 }
 
+// Font and Spacing Functions
 
-//font change action
+// Change font style
 void MainWindow::on_actionFont_Style_triggered() {
     bool ok;
     QFont font = QFontDialog::getFont(&ok, this);
     if (ok) {
-        QTextCursor cursor = ui->textEdit->textCursor();
+        QTextEdit *editor = currentEditor();
+        if (!editor) return;  // Ensure there is a valid text editor
+
+        QTextCursor cursor = editor->textCursor();
         QTextCharFormat format;
         format.setFont(font);
         cursor.mergeCharFormat(format);
     }
 }
 
-//line spacing action
+// Line spacing action
 void MainWindow::on_actionSpacing_triggered(){
-    // Prompt the user to enter the desired line spacing
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+           // Prompt the user to enter the desired line spacing
     qDebug() << "Line Spacing triggered";
     bool ok;
     double spacing = QInputDialog::getDouble(this, "Line Spacing",
@@ -486,10 +654,10 @@ void MainWindow::on_actionSpacing_triggered(){
                                              1.0, 0.5, 4.0, 1, &ok);
 
     if (ok) { // If the user clicked OK and entered a valid number
-        QTextCursor cursor = ui->textEdit->textCursor(); // Get the current text cursor
+        QTextCursor cursor = editor->textCursor(); // Get the current text cursor
         QTextBlockFormat blockFormat = cursor.blockFormat(); // Get the format of the current text block
 
-        // Set the line height to the specified value (proportional to single spacing)
+               // Set the line height to the specified value (proportional to single spacing)
         blockFormat.setLineHeight(spacing * 100, QTextBlockFormat::ProportionalHeight);
 
                // Apply the new format to the current text block
@@ -497,10 +665,13 @@ void MainWindow::on_actionSpacing_triggered(){
     }
 }
 
-//Clear format
+// Clear all formatting
 void MainWindow::on_actionClear_All_Format_triggered()
 {
-    QTextCursor cursor = ui->textEdit->textCursor(); // Get the current text cursor
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+    QTextCursor cursor = editor->textCursor(); // Get the current text cursor
 
     if (!cursor.hasSelection()) {
         // If no text is selected, select the entire document
@@ -520,112 +691,73 @@ void MainWindow::on_actionClear_All_Format_triggered()
     cursor.mergeCharFormat(defaultFormat); // Apply the default formatting
 }
 
-//Font color
+// Color Functions
+
+// Set text color
 void MainWindow::on_actionText_Color_triggered()
 {
-    // Open a color dialog to select a text color
-    QColor color = QColorDialog::getColor(ui->textEdit->textColor(), this, tr("Select Text Color"));
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+           // Open a color dialog to select a text color
+    QColor color = QColorDialog::getColor(editor->textColor(), this, tr("Select Text Color"));
 
     if (color.isValid()) {
         // Apply the selected text color to the text editor
-        ui->textEdit->setTextColor(color);
+        editor->setTextColor(color);
     }
 }
 
-//background action
+// Set background color
 void MainWindow::on_actionBackground_Color_triggered()
 {
-    // Open a color dialog to select a background color
-    QColor color = QColorDialog::getColor(ui->textEdit->palette().color(QPalette::Base), this, tr("Select Background Color"));
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+           // Open a color dialog to select a background color
+    QColor color = QColorDialog::getColor(editor->palette().color(QPalette::Base), this, tr("Select Background Color"));
 
     if (color.isValid()) {
         // Set the background color of the text editor
-        QPalette p = ui->textEdit->palette();
+        QPalette p = editor->palette();
         p.setColor(QPalette::Base, color); // Set the base color (background)
-        ui->textEdit->setPalette(p);
+        editor->setPalette(p);
     }
 }
 
-//dark mode
+// Toggle dark mode
 void MainWindow::on_actionDark_Mode_triggered()
 {
-    // Check the current palette's base color to determine if dark mode is enabled
-    QPalette p = ui->textEdit->palette();
-    QColor currentColor = p.color(QPalette::Base);
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
 
-    if (currentColor == Qt::white) {
-        // Switch to dark mode
-        p.setColor(QPalette::Base, QColor(53, 53, 53)); // Dark background color
-        p.setColor(QPalette::Text, Qt::white); // White text color
-    } else {
+    QPalette p = editor->palette();
+
+    if (isDarkmode) {
         // Switch to light mode
         p.setColor(QPalette::Base, Qt::white); // Light background color
         p.setColor(QPalette::Text, Qt::black); // Black text color
-    }
-
-    ui->textEdit->setPalette(p);
-}
-
-
-// Save and save interval
-void MainWindow::on_actionAuto_Save_triggered()
-{
-    autoSaveEnabled = !autoSaveEnabled;  // Toggle the auto-save state
-
-    if (autoSaveEnabled) {
-        // Enable auto-save with the default interval (e.g., 5 minutes)
-        autoSaveTimer->start(300000); // 5 minutes in milliseconds
-        QMessageBox::information(this, tr("Auto-Save"), tr("Auto-save enabled. Documents will be saved every 5 minutes."));
+        isDarkmode = false; // Update the flag
     } else {
-        // Disable auto-save
-        autoSaveTimer->stop();
-        QMessageBox::information(this, tr("Auto-Save"), tr("Auto-save disabled."));
+        // Switch to dark mode
+        p.setColor(QPalette::Base, QColor(53, 53, 53)); // Dark background color
+        p.setColor(QPalette::Text, Qt::white); // White text color
+        isDarkmode = true; // Update the flag
     }
+
+    editor->setPalette(p);
 }
 
-//save interval function
-void MainWindow::on_actionSave_Interval_triggered()
-{
-    // Prompt user for auto-save interval in minutes
-    bool ok;
-    int interval = QInputDialog::getInt(this, tr("Auto-Save Interval"), tr("Set auto-save interval (in minutes):"), 5, 1, 60, 1, &ok);
-
-    if (ok) {
-        autoSaveTimer->setInterval(interval * 60000); // Convert minutes to milliseconds
-        QMessageBox::information(this, tr("Auto-Save"), tr("Auto-save interval set to %1 minutes.").arg(interval));
-    }
-}
-
-
-// Function to auto-save the document
-void MainWindow::autoSaveDocument(){
-    if (!currentFile.isEmpty()){
-        on_actionSave_triggered(); // save the file
-    }
-}
-
-//tab width and spacesfortabs
-void MainWindow::on_actionTab_Width_triggered(){
-    bool ok;
-    int width = QInputDialog::getInt(this, tr("Tab Width"), tr("Set tab width (number of spaces):"), tabWidth, 1, 8, 1, &ok);
-
-    if (ok) {
-        tabWidth = width;
-        ui->textEdit->setTabStopDistance(tabWidth * QFontMetricsF(ui->textEdit->font()).horizontalAdvance(' ')); // Set tab width
-        QMessageBox::information(this, tr("Tab Width"), tr("Tab width set to %1 spaces.").arg(tabWidth));
-    }
-}
-
-void MainWindow::on_actionToggle_Spaces_for_Tabs_triggered(){
-    useSpacesForTabs = !useSpacesForTabs;
-    QMessageBox::information(this, tr("Spaces for Tabs"), useSpacesForTabs ? tr("Using spaces for tabs.") : tr("Using tabs."));
-}
+// Word Count and Alignment Functions
 
 // Update the word count display in the status bar
 void MainWindow::updateWordCount()
 {
-    // Get the text from the editor
-    QString text = ui->textEdit->toPlainText();
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+           // Get the text from the editor
+    QString text = editor->toPlainText();
 
            // Calculate the word count
     int wordCount = text.split(QRegularExpression("(\\s|\\n|\\r)+"), Qt::SkipEmptyParts).count();
@@ -634,26 +766,131 @@ void MainWindow::updateWordCount()
     wordCountLabel->setText(QString("Words: %1").arg(wordCount));
 }
 
-//alignment
+// Alignment actions
 void MainWindow::on_actionLeft_triggered() {
-    ui->textEdit->setAlignment(Qt::AlignLeft);
+    QTextEdit *editor = currentEditor();
+    if (editor) editor->setAlignment(Qt::AlignLeft);
 }
 
 void MainWindow::on_actionCenter_triggered() {
-    ui->textEdit->setAlignment(Qt::AlignCenter);
+    QTextEdit *editor = currentEditor();
+    if (editor) editor->setAlignment(Qt::AlignCenter);
 }
 
 void MainWindow::on_actionRight_triggered() {
-    ui->textEdit->setAlignment(Qt::AlignRight);
+    QTextEdit *editor = currentEditor();
+    if (editor) editor->setAlignment(Qt::AlignRight);
 }
 
 void MainWindow::on_actionJustify_triggered() {
-    ui->textEdit->setAlignment(Qt::AlignJustify);
+    QTextEdit *editor = currentEditor();
+    if (editor) editor->setAlignment(Qt::AlignJustify);
 }
 
+// Tab width adjustment
+void MainWindow::on_actionTab_Width_triggered()
+{
+    // Get the current editor
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;  // Ensure there is a valid text editor
+
+           // Prompt the user to enter the desired tab width
+    bool ok;
+    int tabWidth = QInputDialog::getInt(this, tr("Tab Width"),
+                                        tr("Set tab width (number of spaces):"),
+                                        4,  // Default value
+                                        1,  // Minimum value
+                                        20, // Maximum value
+                                        1,  // Step value
+                                        &ok);
+
+    if (ok) { // If the user clicked OK and entered a valid number
+        // Calculate the tab stop distance in pixels based on the font metrics
+        QFontMetricsF metrics(editor->font());
+        editor->setTabStopDistance(tabWidth * metrics.horizontalAdvance(' '));
+
+               // Optionally show a message box to confirm the change
+        QMessageBox::information(this, tr("Tab Width"), tr("Tab width set to %1 spaces.").arg(tabWidth));
+    }
+}
+
+//speech function
+void MainWindow::on_actionText_To_Speech_triggered()
+{
+    QTextEdit *editor = currentEditor();
+    if (!editor) return;
+
+    QString text = editor->toPlainText();  // Get the text from the current editor
+    if (!text.isEmpty()) {
+        speech->say(text);  // Use the say() function to speak the text
+    }
+}
+
+//Insert functions
+/*
+//Table Insertion
+void MainWindow::on_actionInsert_Table_triggered()
+{
+    bool ok;
+    int rows = QInputDialog::getInt(this, tr("Insert Table"), tr("Number of rows:"), 2, 1, 100, 1, &ok);
+    if (!ok) return;
+    int columns = QInputDialog::getInt(this, tr("Insert Table"), tr("Number of columns:"), 2, 1, 100, 1, &ok);
+    if (!ok) return;
+
+    QTextCursor cursor = currentEditor()->textCursor();
+    QTextTableFormat tableFormat;
+    tableFormat.setBorder(1);
+    tableFormat.setCellSpacing(0);
+    tableFormat.setCellPadding(4);
+    cursor.insertTable(rows, columns, tableFormat);
+}
+
+void MainWindow::on_actionInsert_Row_triggered()
+{
+    QTextCursor cursor = currentEditor()->textCursor();
+    QTextTable *table = cursor.currentTable();
+    if (table) {
+        int row = cursor.currentTable()->cellAt(cursor).row();
+        table->insertRows(row + 1, 1);
+    }
+}
+
+void MainWindow::on_actionDelete_Row_triggered()
+{
+    QTextCursor cursor = currentEditor()->textCursor();
+    QTextTable *table = cursor.currentTable();
+    if (table) {
+        int row = cursor.currentTable()->cellAt(cursor).row();
+        table->removeRows(row, 1);
+    }
+}
+
+void MainWindow::on_actionInsert_Column_triggered()
+{
+    QTextCursor cursor = currentEditor()->textCursor();
+    QTextTable *table = cursor.currentTable();
+    if (table) {
+        int column = cursor.currentTable()->cellAt(cursor).column();
+        table->insertColumns(column + 1, 1);
+    }
+}
+
+void MainWindow::on_actionDelete_Column_triggered()
+{
+    QTextCursor cursor = currentEditor()->textCursor();
+    QTextTable *table = cursor.currentTable();
+    if (table) {
+        int column = cursor.currentTable()->cellAt(cursor).column();
+        table->removeColumns(column, 1);
+    }
+}
+
+*/
+// Exit Function
 
 // Exit action: Closes the application
 void MainWindow::on_actionExit_triggered()
 {
     QApplication::quit();
 }
+
